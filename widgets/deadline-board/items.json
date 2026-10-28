@@ -8,6 +8,10 @@
     "daysBefore": [
       1
     ],
+    "minutesBefore": [
+      60,
+      5
+    ],
     "digest": true
   },
   "items": [

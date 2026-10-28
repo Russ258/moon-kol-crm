@@ -8,14 +8,15 @@
 //   check-offs are stored on this phone, so no GitHub credentials are needed.
 //   Tasks can also live in items.json in the repo; "done": true works there.
 // Notifications: on every refresh the script re-schedules local reminders for
-//   open tasks (default: 9:00 the day before and on the due day, 1 hour before
-//   a timed task, and a morning digest when anything is overdue or due today).
+//   open tasks (default: 9:00 the day before and on the due day, 1 hour and
+//   5 minutes before a timed task, and a morning digest when anything is
+//   overdue or due today).
 //   iOS asks for notification permission the first time; run the script in
 //   Scriptable once and tap Allow.
 //
 // items.json:
 //   { "title": "Deadlines",
-//     "notify": { "enabled": true, "hour": 9, "minute": 0, "daysBefore": [1], "digest": true },
+//     "notify": { "enabled": true, "hour": 9, "minute": 0, "daysBefore": [1], "minutesBefore": [60, 5], "digest": true },
 //     "items": [ { "text": "Send captions", "due": "2026-10-30" },
 //                { "text": "Call at 3", "due": "2026-10-28 15:00" },
 //                { "text": "Finished thing", "due": "2026-10-26", "done": true } ] }
@@ -198,7 +199,7 @@ function hash(s) {
 // ---------- notifications ----------
 
 async function scheduleNotifications(items, cfg) {
-  const prefs = Object.assign({ enabled: true, hour: 9, minute: 0, daysBefore: [1], digest: true }, cfg.notify || {});
+  const prefs = Object.assign({ enabled: true, hour: 9, minute: 0, daysBefore: [1], minutesBefore: [60, 5], digest: true }, cfg.notify || {});
   try {
     const pending = await Notification.allPending();
     const ours = pending.filter((n) => n.identifier && n.identifier.startsWith(NOTIF_PREFIX)).map((n) => n.identifier);
@@ -236,8 +237,12 @@ async function scheduleNotifications(items, cfg) {
       await add(hash(it.key + "|d" + db), t, title, body);
     }
     if (it.due.hasTime) {
-      const t = new Date(it.due.date.getTime() - 3600 * 1000);
-      await add(hash(it.key + "|h1"), t, "Due in 1 hour", `${it.text} · ${fmtClock(it.due.date)}`);
+      const mins = Array.from(new Set(prefs.minutesBefore || [])).filter((m) => Number.isInteger(m) && m > 0);
+      for (const mb of mins) {
+        const t = new Date(it.due.date.getTime() - mb * 60 * 1000);
+        const title = mb % 60 === 0 ? `Due in ${mb / 60} hour${mb === 60 ? "" : "s"}` : `Due in ${mb} min`;
+        await add(hash(it.key + "|m" + mb), t, title, `${it.text} · ${fmtClock(it.due.date)}`);
+      }
     }
   }
 

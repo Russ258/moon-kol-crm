@@ -17,7 +17,7 @@ A white home-screen widget for iOS built with [Scriptable](https://scriptable.ap
 
 The "When" field understands: `tomorrow`, `fri`, `next mon 9:30am`, `nov 12`, `12 nov`, `11/12`, `in 3 days`, `next week`, `2026-11-12 15:00`, a bare time like `5pm` (today), or blank for no date.
 
-**Reminders.** On every refresh the script re-schedules local notifications for open tasks: 9:00 the day before and on the due day, 1 hour before a timed task, and a morning digest when anything is overdue or due today. Checking a task off cancels its reminders on the next refresh. The first time, iOS asks for notification permission: run the script inside Scriptable once and tap Allow.
+**Reminders.** On every refresh the script re-schedules local notifications for open tasks: 9:00 the day before and on the due day, 1 hour and 5 minutes before a timed task, and a morning digest when anything is overdue or due today. Checking a task off cancels its reminders on the next refresh. The first time, iOS asks for notification permission: run the script inside Scriptable once and tap Allow.
 
 ## Setup
 
@@ -31,7 +31,7 @@ Tap **Add task** in the checklist for day-to-day use. For tasks you want in the 
 ```json
 {
   "title": "Deadlines",
-  "notify": { "enabled": true, "hour": 9, "minute": 0, "daysBefore": [1], "digest": true },
+  "notify": { "enabled": true, "hour": 9, "minute": 0, "daysBefore": [1], "minutesBefore": [60, 5], "digest": true },
   "items": [
     { "text": "Send speaker captions", "due": "2026-10-30" },
     { "text": "Call with legal", "due": "2026-11-03 15:00" },
@@ -49,6 +49,7 @@ Tap **Add task** in the checklist for day-to-day use. For tasks you want in the 
 | `showDone` | Top level, set `false` to hide finished items from the widget entirely. |
 | `notify.hour` / `minute` | When daily reminders fire. |
 | `notify.daysBefore` | Extra reminder days ahead of the due date, e.g. `[1, 3]`. The due day itself is always included. |
+| `notify.minutesBefore` | Warnings ahead of a timed task, in minutes, e.g. `[60, 5]`. Only applies to tasks with a time. |
 | `notify.digest` | Morning summary when anything is overdue or due today. |
 | `notify.enabled` | `false` turns all reminders off. |
 | `tapUrl` | Top level, optional. Where "Edit the shared list on GitHub" in the checklist opens. |
