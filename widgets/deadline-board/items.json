@@ -1,0 +1,11 @@
+{
+  "title": "DEADLINES",
+  "showDone": false,
+  "items": [
+    { "text": "Example: overdue item", "due": "2026-10-27", "done": false },
+    { "text": "Example: due today", "due": "2026-10-28 15:00", "done": false },
+    { "text": "Example: due this week", "due": "2026-10-31", "done": false },
+    { "text": "Example: due later", "due": "2026-11-12", "done": false },
+    { "text": "Example: finished item", "due": "2026-10-26", "done": true }
+  ]
+}
