@@ -1,7 +1,7 @@
 // BITCOIN_STUDIO_BOARD — Scriptable widget
-// Live BTC price, funding, Fear & Greed, chain stats, plus a guest/posting line
-// driven by board.json in this same folder. Loaded on each refresh by loader.js,
-// so pushing to GitHub updates the widget on the home screen.
+// Live BTC price with 24h sparkline, funding, Fear & Greed gauge, chain stats,
+// plus a guest line and posting tally driven by board.json in this folder.
+// Loaded on each refresh by loader.js, so pushing to GitHub updates the widget.
 //
 // Widget parameter (long-press widget > Edit Widget > Parameter), optional:
 //   "compact"   force the small layout
@@ -17,17 +17,23 @@ const RAW = `https://raw.githubusercontent.com/${SRC.repo}/${SRC.branch}/${SRC.d
 const CONFIG_URL = `${RAW}/board.json`;
 const REFRESH_MINUTES = 10;
 const TIMEOUT_SECONDS = 8;
+const SPARK_POINTS = 48;
 
 const C = {
-  bg0: new Color("#0B0F17"),
-  bg1: new Color("#141B2B"),
-  card: new Color("#FFFFFF", 0.06),
-  text: new Color("#F3F4F6"),
-  muted: new Color("#8B93A7"),
+  bg0: new Color("#0A0D14"),
+  bg1: new Color("#141A2A"),
+  bg2: new Color("#1B1626"),
+  card: new Color("#FFFFFF", 0.07),
+  cardLine: new Color("#FFFFFF", 0.10),
+  text: new Color("#F5F6F8"),
+  muted: new Color("#8A93A8"),
+  dim: new Color("#5C6478"),
   orange: new Color("#F7931A"),
+  orangeDeep: new Color("#C96F00"),
   green: new Color("#22C55E"),
   red: new Color("#EF4444"),
   yellow: new Color("#EAB308"),
+  amber: new Color("#F59E0B"),
 };
 
 const fm = FileManager.local();
@@ -82,6 +88,43 @@ async function fetchPrice() {
       return { usd: last, change24h: ((last - open) / open) * 100, src: "Kraken" };
     },
   ]);
+}
+
+// Returns an array of ~SPARK_POINTS closing prices over the last 24h, oldest first.
+async function fetchSpark() {
+  const cutoff = Date.now() - 24 * 3600 * 1000;
+  const series = await firstOf([
+    async () => {
+      const j = await getJSON("https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=1");
+      return j.prices.map((p) => Number(p[1]));
+    },
+    async () => {
+      const j = await getJSON("https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=3600");
+      // [time, low, high, open, close, volume], newest first
+      return j
+        .filter((c) => c[0] * 1000 >= cutoff)
+        .sort((a, b) => a[0] - b[0])
+        .map((c) => Number(c[4]));
+    },
+    async () => {
+      const j = await getJSON("https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=60");
+      const key = Object.keys(j.result).find((k) => k !== "last");
+      return j.result[key]
+        .filter((c) => c[0] * 1000 >= cutoff)
+        .map((c) => Number(c[4]));
+    },
+  ]);
+  if (!series || series.length < 2) return null;
+  return downsample(series.filter((n) => !isNaN(n)), SPARK_POINTS);
+}
+
+function downsample(arr, n) {
+  if (arr.length <= n) return arr;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push(arr[Math.round((i / (n - 1)) * (arr.length - 1))]);
+  }
+  return out;
 }
 
 async function fetchFunding() {
@@ -148,15 +191,16 @@ function writeCache(data) {
 }
 
 async function loadAll() {
-  const [price, funding, fng, chain, cfg] = await Promise.all([
+  const [price, spark, funding, fng, chain, cfg] = await Promise.all([
     fetchPrice(),
+    fetchSpark(),
     fetchFunding(),
     fetchFearGreed(),
     fetchChain(),
     fetchConfig(),
   ]);
   const cached = readCache();
-  const fresh = { price, funding, fng, chain, cfg };
+  const fresh = { price, spark, funding, fng, chain, cfg };
   const stale = {};
   const data = {};
   for (const k of Object.keys(fresh)) {
@@ -207,6 +251,11 @@ function fmtCountdown(ms) {
   return h > 0 ? `${h}h ${m % 60}m` : `${m}m`;
 }
 
+// Fake letter-spacing with hair spaces; Scriptable has no tracking API.
+function tracked(s) {
+  return s.split("").join(" ");
+}
+
 function changeColor(n) {
   if (n === null || n === undefined || isNaN(n)) return C.muted;
   return n >= 0 ? C.green : C.red;
@@ -228,6 +277,84 @@ function fundingColor(rate) {
   return C.text;
 }
 
+// ---------- drawing ----------
+
+function sparklineImage(points, w, h, color) {
+  const ctx = new DrawContext();
+  ctx.size = new Size(w, h);
+  ctx.opaque = false;
+  ctx.respectScreenScale = true;
+
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const range = max - min || 1;
+  const pad = 3;
+  const xs = (i) => pad + (i / (points.length - 1)) * (w - pad * 2);
+  const ys = (v) => h - pad - ((v - min) / range) * (h - pad * 2);
+
+  const fill = new Path();
+  fill.move(new Point(xs(0), h));
+  points.forEach((v, i) => fill.addLine(new Point(xs(i), ys(v))));
+  fill.addLine(new Point(xs(points.length - 1), h));
+  fill.closeSubpath();
+  ctx.setFillColor(new Color(color.hex, 0.16));
+  ctx.addPath(fill);
+  ctx.fillPath();
+
+  const line = new Path();
+  points.forEach((v, i) => (i === 0 ? line.move(new Point(xs(i), ys(v))) : line.addLine(new Point(xs(i), ys(v)))));
+  ctx.setStrokeColor(color);
+  ctx.setLineWidth(1.8);
+  ctx.addPath(line);
+  ctx.strokePath();
+
+  const lx = xs(points.length - 1);
+  const ly = ys(points[points.length - 1]);
+  ctx.setFillColor(new Color(color.hex, 0.35));
+  ctx.fillEllipse(new Rect(lx - 4.5, ly - 4.5, 9, 9));
+  ctx.setFillColor(color);
+  ctx.fillEllipse(new Rect(lx - 2.5, ly - 2.5, 5, 5));
+
+  return ctx.getImage();
+}
+
+function gaugeImage(value, w, h, color) {
+  const ctx = new DrawContext();
+  ctx.size = new Size(w, h);
+  ctx.opaque = false;
+  ctx.respectScreenScale = true;
+
+  const track = new Path();
+  track.addRoundedRect(new Rect(0, 0, w, h), h / 2, h / 2);
+  ctx.setFillColor(new Color("#FFFFFF", 0.10));
+  ctx.addPath(track);
+  ctx.fillPath();
+
+  const v = Math.max(0, Math.min(100, value || 0));
+  const fw = Math.max(h, (v / 100) * w);
+  const fillPath = new Path();
+  fillPath.addRoundedRect(new Rect(0, 0, fw, h), h / 2, h / 2);
+  ctx.setFillColor(color);
+  ctx.addPath(fillPath);
+  ctx.fillPath();
+
+  return ctx.getImage();
+}
+
+function symbolImage(stack, name, size, color, fallbackText) {
+  try {
+    const sym = SFSymbol.named(name);
+    if (sym && sym.image) {
+      sym.applyFont(Font.semiboldSystemFont(size));
+      const img = stack.addImage(sym.image);
+      img.imageSize = new Size(size, size);
+      img.tintColor = color;
+      return img;
+    }
+  } catch (e) {}
+  return label(stack, fallbackText, size, color);
+}
+
 // ---------- UI ----------
 
 function label(stack, text, size, color, font) {
@@ -239,47 +366,114 @@ function label(stack, text, size, color, font) {
   return t;
 }
 
-function statCell(parent, title, value, color, sub) {
+function dot(stack, color, size) {
+  const d = stack.addStack();
+  d.size = new Size(size, size);
+  d.cornerRadius = size / 2;
+  d.backgroundColor = color;
+  return d;
+}
+
+function badge(stack, size) {
+  const b = stack.addStack();
+  b.size = new Size(size, size);
+  b.cornerRadius = size / 2;
+  b.backgroundColor = C.orange;
+  b.layoutHorizontally();
+  b.centerAlignContent();
+  b.addSpacer();
+  label(b, "₿", size * 0.68, C.bg0, Font.heavySystemFont(size * 0.68));
+  b.addSpacer();
+  return b;
+}
+
+function statCell(parent, title, value, color, sub, accent) {
   const cell = parent.addStack();
   cell.layoutVertically();
   cell.backgroundColor = C.card;
-  cell.cornerRadius = 8;
-  cell.setPadding(5, 7, 5, 7);
-  label(cell, title.toUpperCase(), 8, C.muted, Font.semiboldSystemFont(8));
-  cell.addSpacer(1);
-  label(cell, value, 13, color || C.text, Font.boldMonospacedSystemFont(13));
+  cell.cornerRadius = 9;
+  cell.borderWidth = 1;
+  cell.borderColor = C.cardLine;
+  cell.setPadding(6, 8, 6, 8);
+
+  label(cell, tracked(title.toUpperCase()), 7.5, C.muted, Font.semiboldSystemFont(7.5));
+  cell.addSpacer(2);
+  const row = cell.addStack();
+  row.layoutHorizontally();
+  row.centerAlignContent();
+  if (accent) {
+    dot(row, accent, 5);
+    row.addSpacer(4);
+  }
+  label(row, value, 13, color || C.text, Font.boldMonospacedSystemFont(13));
   if (sub) {
-    label(cell, sub, 8, C.muted);
+    cell.addSpacer(1);
+    label(cell, sub, 8, C.dim);
   }
   return cell;
 }
 
-function header(w, cfg, data, stale) {
+function header(w, cfg, data, stale, badgeSize) {
   const row = w.addStack();
   row.layoutHorizontally();
   row.centerAlignContent();
+  badge(row, badgeSize);
+  row.addSpacer(6);
   const title = (cfg && cfg.title) || "BITCOIN STUDIO BOARD";
-  label(row, title, 10, C.orange, Font.heavySystemFont(10));
+  label(row, tracked(title.toUpperCase()), 9.5, C.text, Font.heavySystemFont(9.5));
   row.addSpacer();
   const anyStale = Object.keys(stale).length > 0;
-  const stamp = (anyStale ? "cached · " : "") + fmtTime(data.fetchedAt);
-  label(row, stamp, 9, C.muted);
+  dot(row, anyStale ? C.amber : C.green, 6);
+  row.addSpacer(4);
+  label(row, anyStale ? "cached" : fmtTime(data.fetchedAt), 9, C.muted, Font.mediumSystemFont(9));
 }
 
 function priceBlock(stack, data, big) {
   const p = data.price;
-  label(stack, fmtUSD(p && p.usd), big, C.text, Font.boldSystemFont(big));
+  const price = label(stack, fmtUSD(p && p.usd), big, C.text, Font.heavySystemFont(big));
+  price.minimumScaleFactor = 0.5;
+
   const row = stack.addStack();
   row.layoutHorizontally();
   row.centerAlignContent();
-  row.spacing = 4;
+  row.spacing = 5;
   const ch = p ? p.change24h : null;
+  const col = changeColor(ch);
   const pill = row.addStack();
-  pill.backgroundColor = new Color(changeColor(ch).hex, 0.18);
-  pill.cornerRadius = 6;
-  pill.setPadding(2, 6, 2, 6);
-  label(pill, fmtPct(ch, 2), 11, changeColor(ch), Font.semiboldSystemFont(11));
-  label(row, "24h", 10, C.muted);
+  pill.layoutHorizontally();
+  pill.centerAlignContent();
+  pill.backgroundColor = new Color(col.hex, 0.16);
+  pill.cornerRadius = 7;
+  pill.setPadding(2, 6, 2, 7);
+  if (ch !== null && !isNaN(ch)) {
+    symbolImage(pill, ch >= 0 ? "arrow.up.right" : "arrow.down.right", 8, col, ch >= 0 ? "▲" : "▼");
+    pill.addSpacer(3);
+  }
+  label(pill, fmtPct(ch, 2), 11, col, Font.boldSystemFont(11));
+  label(row, "24h", 9.5, C.muted, Font.mediumSystemFont(9.5));
+}
+
+function sparkBlock(stack, data, w, h) {
+  if (!data.spark || data.spark.length < 2) return;
+  const ch = data.price ? data.price.change24h : null;
+  const img = stack.addImage(sparklineImage(data.spark, w, h, changeColor(ch)));
+  img.imageSize = new Size(w, h);
+  img.resizable = false;
+}
+
+function postsDots(stack, posts) {
+  if (!posts || typeof posts.goal !== "number") return;
+  const goal = Math.min(10, Math.max(0, Math.round(posts.goal)));
+  const done = Math.min(goal, Math.max(0, Math.round(posts.done || 0)));
+  const row = stack.addStack();
+  row.layoutHorizontally();
+  row.centerAlignContent();
+  row.spacing = 3;
+  for (let i = 0; i < goal; i++) {
+    dot(row, i < done ? C.orange : new Color("#FFFFFF", 0.14), 5.5);
+  }
+  row.addSpacer(5);
+  label(row, `${done}/${goal}`, 9.5, done >= goal && goal > 0 ? C.green : C.muted, Font.semiboldSystemFont(9.5));
 }
 
 function footer(w, cfg) {
@@ -287,43 +481,94 @@ function footer(w, cfg) {
   row.layoutHorizontally();
   row.centerAlignContent();
   const g = cfg && cfg.guest;
+  symbolImage(row, "mic.fill", 9, C.orange, "🎙");
+  row.addSpacer(5);
   if (g && g.name) {
-    const when = g.when ? ` · ${g.when}` : "";
-    label(row, `🎙 ${g.name}${when}`, 10, C.text, Font.mediumSystemFont(10));
+    label(row, g.name, 10.5, C.text, Font.semiboldSystemFont(10.5));
+    if (g.when) {
+      row.addSpacer(5);
+      label(row, g.when, 10, C.muted, Font.mediumSystemFont(10));
+    }
   } else {
     label(row, "No guest scheduled", 10, C.muted);
   }
   row.addSpacer();
-  const posts = cfg && cfg.posts;
-  if (posts && typeof posts.goal === "number") {
-    const done = Number(posts.done || 0);
-    const col = done >= posts.goal ? C.green : C.text;
-    label(row, `Posts ${done}/${posts.goal}`, 10, col, Font.semiboldSystemFont(10));
-  }
+  postsDots(row, cfg && cfg.posts);
 }
 
-function buildSmall(data, stale, cfg) {
-  const w = new ListWidget();
-  w.setPadding(12, 12, 12, 12);
-  header(w, cfg, data, stale);
-  w.addSpacer();
-  priceBlock(w, data, 26);
-  w.addSpacer();
-  const f = data.fng;
-  const row = w.addStack();
+function divider(w) {
+  const d = w.addStack();
+  d.size = new Size(0, 1);
+  d.backgroundColor = C.cardLine;
+}
+
+function miniStat(parent, title, value, color, accent) {
+  const cell = parent.addStack();
+  cell.layoutVertically();
+  label(cell, tracked(title.toUpperCase()), 7, C.muted, Font.semiboldSystemFont(7));
+  cell.addSpacer(1);
+  const row = cell.addStack();
   row.layoutHorizontally();
   row.centerAlignContent();
-  label(row, "F&G", 9, C.muted, Font.semiboldSystemFont(9));
-  row.addSpacer(4);
-  label(row, f ? `${f.value} ${f.label}` : "—", 11, fngColor(f && f.value), Font.boldSystemFont(11));
+  if (accent) {
+    dot(row, accent, 5);
+    row.addSpacer(3);
+  }
+  label(row, value, 11, color || C.text, Font.boldMonospacedSystemFont(11));
+  return cell;
+}
+
+// Square (2x2) layout. ~158pt wide on current iPhones, 134pt inside the padding.
+function buildSmall(data, stale, cfg) {
+  const w = new ListWidget();
+  w.setPadding(11, 12, 11, 12);
+
+  const head = w.addStack();
+  head.layoutHorizontally();
+  head.centerAlignContent();
+  badge(head, 14);
+  head.addSpacer(5);
+  const title = (cfg && cfg.shortTitle) || "STUDIO BOARD";
+  label(head, tracked(title.toUpperCase()), 8, C.text, Font.heavySystemFont(8));
+  head.addSpacer();
+  dot(head, Object.keys(stale).length > 0 ? C.amber : C.green, 6);
+
+  w.addSpacer(5);
+  priceBlock(w, data, 22);
+  w.addSpacer(4);
+  sparkBlock(w, data, 134, 26);
+  w.addSpacer();
+
+  const f = data.fng, fu = data.funding;
+  const stats = w.addStack();
+  stats.layoutHorizontally();
+  stats.centerAlignContent();
+  miniStat(stats, "Fear & Greed", f ? String(f.value) : "—", C.text, fngColor(f && f.value));
+  stats.addSpacer();
+  miniStat(stats, "Funding", fu ? fmtPct(fu.rate, 3) : "—", fundingColor(fu && fu.rate));
+
+  const g = cfg && cfg.guest;
+  if (g && g.name) {
+    w.addSpacer(4);
+    const row = w.addStack();
+    row.layoutHorizontally();
+    row.centerAlignContent();
+    symbolImage(row, "mic.fill", 8, C.orange, "🎙");
+    row.addSpacer(4);
+    label(row, g.name, 9, C.muted, Font.semiboldSystemFont(9));
+    if (g.when) {
+      row.addSpacer(4);
+      label(row, g.when, 8.5, C.dim);
+    }
+  }
   return w;
 }
 
 function buildMedium(data, stale, cfg) {
   const w = new ListWidget();
-  w.setPadding(12, 14, 10, 14);
-  header(w, cfg, data, stale);
-  w.addSpacer(6);
+  w.setPadding(12, 14, 11, 14);
+  header(w, cfg, data, stale, 16);
+  w.addSpacer(7);
 
   const body = w.addStack();
   body.layoutHorizontally();
@@ -331,27 +576,33 @@ function buildMedium(data, stale, cfg) {
 
   const left = body.addStack();
   left.layoutVertically();
-  priceBlock(left, data, 30);
+  left.size = new Size(150, 0);
+  priceBlock(left, data, 28);
+  left.addSpacer(5);
+  sparkBlock(left, data, 142, 28);
+
   body.addSpacer();
 
   const grid = body.addStack();
   grid.layoutVertically();
-  grid.spacing = 4;
+  grid.spacing = 5;
 
   const fu = data.funding, f = data.fng, ch = data.chain;
   const r1 = grid.addStack();
   r1.layoutHorizontally();
-  r1.spacing = 4;
+  r1.spacing = 5;
   statCell(r1, "Funding 8h", fu ? fmtPct(fu.rate, 4) : "—", fundingColor(fu && fu.rate));
-  statCell(r1, "Fear & Greed", f ? String(f.value) : "—", fngColor(f && f.value));
+  statCell(r1, "Fear & Greed", f ? String(f.value) : "—", C.text, null, fngColor(f && f.value));
 
   const r2 = grid.addStack();
   r2.layoutHorizontally();
-  r2.spacing = 4;
+  r2.spacing = 5;
   statCell(r2, "Block", ch && ch.height ? fmtInt(ch.height) : "—");
   statCell(r2, "Fast fee", ch && ch.fees ? `${fmtInt(ch.fees.fast)} s/vB` : "—");
 
-  w.addSpacer(6);
+  w.addSpacer(8);
+  divider(w);
+  w.addSpacer(7);
   footer(w, cfg);
   return w;
 }
@@ -359,26 +610,37 @@ function buildMedium(data, stale, cfg) {
 function buildLarge(data, stale, cfg) {
   const w = new ListWidget();
   w.setPadding(14, 16, 14, 16);
-  header(w, cfg, data, stale);
-  w.addSpacer(10);
-  priceBlock(w, data, 40);
+  header(w, cfg, data, stale, 18);
+  w.addSpacer(12);
+  priceBlock(w, data, 38);
+  w.addSpacer(8);
+  sparkBlock(w, data, 297, 56);
   w.addSpacer(12);
 
-  const fu = data.funding, f = data.fng, ch = data.chain;
+  const f = data.fng;
+  const fgRow = w.addStack();
+  fgRow.layoutHorizontally();
+  fgRow.centerAlignContent();
+  label(fgRow, tracked("FEAR & GREED"), 8, C.muted, Font.semiboldSystemFont(8));
+  fgRow.addSpacer();
+  label(fgRow, f ? `${f.value}` : "—", 12, fngColor(f && f.value), Font.boldMonospacedSystemFont(12));
+  fgRow.addSpacer(5);
+  label(fgRow, f ? f.label : "", 10, C.muted, Font.mediumSystemFont(10));
+  w.addSpacer(5);
+  const gauge = w.addImage(gaugeImage(f ? f.value : 0, 297, 6, fngColor(f && f.value)));
+  gauge.imageSize = new Size(297, 6);
+  gauge.resizable = false;
+  w.addSpacer(12);
+
+  const fu = data.funding, ch = data.chain;
   const r1 = w.addStack();
   r1.layoutHorizontally();
   r1.spacing = 6;
   const next = fu && fu.nextAt ? "next in " + fmtCountdown(fu.nextAt - Date.now()) : "";
   statCell(r1, "Funding 8h", fu ? fmtPct(fu.rate, 4) : "—", fundingColor(fu && fu.rate), (fu && fu.src ? fu.src + " · " : "") + next);
-  statCell(r1, "Fear & Greed", f ? String(f.value) : "—", fngColor(f && f.value), f ? f.label : "");
-
-  w.addSpacer(6);
-  const r2 = w.addStack();
-  r2.layoutHorizontally();
-  r2.spacing = 6;
-  statCell(r2, "Block height", ch && ch.height ? fmtInt(ch.height) : "—", C.text, "mempool.space");
+  statCell(r1, "Block height", ch && ch.height ? fmtInt(ch.height) : "—", C.text, "mempool.space");
   const fees = ch && ch.fees;
-  statCell(r2, "Fees s/vB", fees ? `${fmtInt(fees.fast)} / ${fmtInt(fees.medium)} / ${fmtInt(fees.slow)}` : "—", C.text, "fast / 30m / 1h");
+  statCell(r1, "Fees s/vB", fees ? `${fmtInt(fees.fast)} / ${fmtInt(fees.medium)} / ${fmtInt(fees.slow)}` : "—", C.text, "fast / 30m / 1h");
 
   w.addSpacer();
   const g = cfg && cfg.guest;
@@ -390,14 +652,18 @@ function buildLarge(data, stale, cfg) {
     label(w, cfg.note, 11, C.text);
     w.addSpacer(4);
   }
+  divider(w);
+  w.addSpacer(8);
   footer(w, cfg);
   return w;
 }
 
 function decorate(w, cfg) {
   const grad = new LinearGradient();
-  grad.colors = [C.bg0, C.bg1];
-  grad.locations = [0, 1];
+  grad.colors = [C.bg0, C.bg1, C.bg2];
+  grad.locations = [0, 0.55, 1];
+  grad.startPoint = new Point(0, 0);
+  grad.endPoint = new Point(1, 1);
   w.backgroundGradient = grad;
   w.url = (cfg && cfg.tapUrl) || "https://mempool.space";
   w.refreshAfterDate = new Date(Date.now() + REFRESH_MINUTES * 60 * 1000);
