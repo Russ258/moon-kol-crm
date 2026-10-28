@@ -1,5 +1,6 @@
 {
   "title": "Deadlines",
+  "scale": 1,
   "notify": {
     "enabled": true,
     "hour": 9,

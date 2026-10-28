@@ -372,7 +372,7 @@ function itemRow(w, item, spec) {
   t.minimumScaleFactor = 0.85;
   row.addSpacer(8);
   const hot = !item.done && (item.overdue || item.days === 0);
-  label(row, fmtWhen(item, spec.wide), spec.text - 2.5, item.done ? C.dim : hot ? col : C.muted, Font.semiboldSystemFont(spec.text - 2.5));
+  label(row, fmtWhen(item, spec.wide), spec.text - 3, item.done ? C.dim : hot ? col : C.muted, Font.semiboldSystemFont(spec.text - 3));
 }
 
 function emptyState(w, cfg, spec) {
@@ -393,11 +393,19 @@ function emptyState(w, cfg, spec) {
 function buildWidget(items, cfg, stale, family) {
   const w = new ListWidget();
   w.backgroundColor = C.bg;
-  const spec = {
-    small: { pad: [12, 12, 12, 12], title: 15, pill: 10, sub: 10, subtitle: false, text: 12, rowPad: 4, gap: 2, rows: 3, wide: false, sections: false },
-    medium: { pad: [13, 14, 13, 14], title: 17, pill: 11, sub: 11, subtitle: false, text: 13.5, rowPad: 5, gap: 2, rows: 3, wide: true, sections: false },
-    large: { pad: [16, 16, 16, 16], title: 22, pill: 12, sub: 12, subtitle: true, text: 15, rowPad: 6, gap: 2, rows: 7, wide: true, sections: true },
+  // "scale" in items.json multiplies every font size (1 = default, 1.2 = 20% bigger).
+  // Fewer rows fit as it grows; the checklist always has the full list.
+  const k = Math.min(1.6, Math.max(0.8, Number(cfg.scale) || 1));
+  const base = {
+    small: { pad: [12, 12, 12, 12], title: 16, pill: 10.5, sub: 10, subtitle: false, text: 13, rowPad: 4, gap: 2, rows: 3, wide: false, sections: false },
+    medium: { pad: [13, 14, 13, 14], title: 19, pill: 11.5, sub: 11, subtitle: false, text: 15, rowPad: 5, gap: 3, rows: 3, wide: true, sections: false },
+    large: { pad: [16, 16, 16, 16], title: 26, pill: 13, sub: 13, subtitle: true, text: 18, rowPad: 8, gap: 3, rows: 5, wide: true, sections: true },
   }[family];
+  const spec = Object.assign({}, base, {
+    title: base.title * k, pill: base.pill * k, sub: base.sub * k, text: base.text * k,
+    rowPad: base.rowPad * k, section: 10.5 * k,
+    rows: Math.max(2, Math.floor(base.rows / k)),
+  });
   w.setPadding(...spec.pad);
   header(w, cfg, items, stale, spec);
   w.addSpacer(spec.subtitle ? 10 : 8);
@@ -418,7 +426,7 @@ function buildWidget(items, cfg, stale, family) {
     const g = groupOf(item);
     if (spec.sections && g !== lastGroup) {
       if (i > 0) w.addSpacer(6);
-      sectionLabel(w, GROUP_LABEL[g], 9.5);
+      sectionLabel(w, GROUP_LABEL[g], spec.section);
       w.addSpacer(2);
       lastGroup = g;
     } else if (i > 0) {

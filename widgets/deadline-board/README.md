@@ -45,6 +45,7 @@ Tap **Add task** in the checklist for day-to-day use. For tasks you want in the 
 | `text` | What to do. One line; long text shrinks to fit. |
 | `due` | `YYYY-MM-DD` or `YYYY-MM-DD HH:mm`, local time. Optional. |
 | `done` | `true` marks it finished. Done items show with a green check, at most two on the widget. |
+| `scale` | Top level. Multiplies every font size on the widget. `1` is default, `1.2` is 20% bigger with fewer rows. Range 0.8 to 1.6. |
 | `showDone` | Top level, set `false` to hide finished items from the widget entirely. |
 | `notify.hour` / `minute` | When daily reminders fire. |
 | `notify.daysBefore` | Extra reminder days ahead of the due date, e.g. `[1, 3]`. The due day itself is always included. |
