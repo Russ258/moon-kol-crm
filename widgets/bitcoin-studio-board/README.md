@@ -2,7 +2,7 @@
 
 A square home-screen widget for iOS built with [Scriptable](https://scriptable.app). Shows live BTC price with a 24h sparkline, perp funding rate, Fear & Greed, block height and fees, plus a guest line and posting tally that you edit in `board.json`.
 
-The widget pulls `board.js` from this repo on every refresh. Push a change to GitHub and the home screen updates within about 10 minutes. No copy-paste after the first setup.
+The widget pulls `board.js` from this repo on every refresh. Push a change to GitHub and the home screen updates on the next refresh, usually within 10 minutes, or immediately if you open Scriptable and run the script. No copy-paste after the first setup.
 
 ## Setup (about 3 minutes)
 
@@ -22,7 +22,7 @@ Optional **Parameter** field on the widget:
 
 | File | Purpose |
 | --- | --- |
-| `loader.js` | The only thing pasted into Scriptable. Fetches `board.js` from GitHub, caches it, runs it. |
+| `loader.js` | The only thing pasted into Scriptable. Looks up the branch's latest commit, fetches `board.js` at that commit, caches it, runs it. |
 | `board.js` | The widget itself. Edit this to change layout or data sources. |
 | `board.json` | Guest, posting goal, tap URL, title. Edit this from Claude Code mobile for day-to-day changes. |
 
@@ -58,3 +58,7 @@ All public, no keys. Each stat tries sources in order and falls back to the last
 ## Branch note
 
 `loader.js` and `board.js` both point at the branch `claude/phone-widget-idea-h8ttos`. After merging to `main`, change `branch` in the loader inside Scriptable and in the `SRC` block at the top of `board.js`.
+
+## Why the commit lookup
+
+`raw.githubusercontent.com` caches branch URLs for 5 minutes and ignores query strings, so a plain branch URL can serve the previous version right after a push. The loader asks the GitHub API for the branch's current commit (unauthenticated, 60 requests per hour is plenty for a widget) and fetches the file at that commit, which is immutable. If the API call fails it falls back to the branch URL.

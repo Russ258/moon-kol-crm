@@ -13,7 +13,8 @@ const SRC = (typeof BSB !== "undefined" && BSB) || {
   dir: "widgets/bitcoin-studio-board",
 };
 
-const RAW = `https://raw.githubusercontent.com/${SRC.repo}/${SRC.branch}/${SRC.dir}`;
+// Prefer the exact commit the loader resolved; branch URLs are CDN-cached for 5 minutes.
+const RAW = `https://raw.githubusercontent.com/${SRC.repo}/${SRC.sha || SRC.branch}/${SRC.dir}`;
 const CONFIG_URL = `${RAW}/board.json`;
 const REFRESH_MINUTES = 10;
 const TIMEOUT_SECONDS = 8;
@@ -174,7 +175,7 @@ async function fetchChain() {
 async function fetchConfig() {
   const param = (args.widgetParameter || "").trim();
   const url = /^https?:\/\//.test(param) ? param : CONFIG_URL;
-  return firstOf([async () => await getJSON(`${url}?t=${Date.now()}`)]);
+  return firstOf([async () => await getJSON(url)]);
 }
 
 function readCache() {
