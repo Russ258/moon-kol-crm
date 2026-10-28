@@ -4,8 +4,9 @@
 //   with a checkbox tinted by urgency (red overdue, orange today, amber this
 //   week, blue later). Tap the widget to open the full list.
 // In app (tap the widget, or run the script): a scrollable checklist. Tap a
-//   task to check it off. Completion is stored on this phone, so it works
-//   without any GitHub credentials. "done": true in items.json also works.
+//   task to check it off, "Add task" at the top to add one. Added tasks and
+//   check-offs are stored on this phone, so no GitHub credentials are needed.
+//   Tasks can also live in items.json in the repo; "done": true works there.
 // Notifications: on every refresh the script re-schedules local reminders for
 //   open tasks (default: 9:00 the day before and on the due day, 1 hour before
 //   a timed task, and a morning digest when anything is overdue or due today).
@@ -73,15 +74,19 @@ async function fetchItems() {
   }
 }
 
-// Local completion overrides: { "overrides": { "<text>|<due>": true|false } }
+// Phone-side state:
+//   overrides: { "<text>|<due>": true|false }   check-offs for repo items
+//   hidden:    { "<text>|<due>": true }          repo items cleared from the list
+//   local:     [ { id, text, due, done, created } ]  tasks added on the phone
 function readState() {
+  let s = {};
   try {
     if (fm.fileExists(STATE)) {
-      const s = JSON.parse(fm.readString(STATE));
-      if (s && typeof s === "object") return Object.assign({ overrides: {} }, s);
+      const parsed = JSON.parse(fm.readString(STATE));
+      if (parsed && typeof parsed === "object") s = parsed;
     }
   } catch (e) {}
-  return { overrides: {} };
+  return Object.assign({ overrides: {}, hidden: {}, local: [] }, s);
 }
 
 function writeState(state) {
@@ -111,10 +116,13 @@ function prepare(cfg, state) {
   const today = startOfDay(new Date());
   const now = new Date();
   const out = [];
-  for (const raw of cfg.items) {
+  const repo = (cfg.items || []).map((r) => Object.assign({}, r, { source: "repo" }));
+  const local = (state.local || []).map((l) => Object.assign({}, l, { source: "local" }));
+  for (const raw of repo.concat(local)) {
     if (!raw || !raw.text) continue;
-    const key = itemKey(raw);
-    const override = state.overrides[key];
+    const key = raw.source === "local" ? `local:${raw.id}` : itemKey(raw);
+    if (raw.source === "repo" && state.hidden[key]) continue;
+    const override = raw.source === "repo" ? state.overrides[key] : undefined;
     const done = typeof override === "boolean" ? override : !!raw.done;
     const due = parseDue(raw.due);
     let days = null, overdue = false;
@@ -122,7 +130,7 @@ function prepare(cfg, state) {
       days = Math.round((startOfDay(due.date) - today) / DAY);
       overdue = due.hasTime ? due.date < now : days < 0;
     }
-    out.push({ key, text: String(raw.text), due, days, overdue, done });
+    out.push({ key, text: String(raw.text), due, days, overdue, done, source: raw.source, id: raw.id });
   }
   out.sort((a, b) => {
     if (a.done !== b.done) return a.done ? 1 : -1;
@@ -431,9 +439,144 @@ function buildWidget(items, cfg, stale, family) {
   return w;
 }
 
+// ---------- plain-words due dates ----------
+
+const WEEKDAY_NAMES = { sun: 0, sunday: 0, mon: 1, monday: 1, tue: 2, tues: 2, tuesday: 2, wed: 3, weds: 3, wednesday: 3, thu: 4, thur: 4, thurs: 4, thursday: 4, fri: 5, friday: 5, sat: 6, saturday: 6 };
+const MONTH_NAMES = { jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3, may: 4, jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7, sep: 8, sept: 8, september: 8, oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11 };
+
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+function toDueString(d, time) {
+  const base = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  return time ? `${base} ${pad2(time.h)}:${pad2(time.m)}` : base;
+}
+
+// "tomorrow", "fri 3pm", "nov 12", "12 nov", "11/12", "2026-11-12 15:00", "in 3 days",
+// "next week", "3pm" (today), "" (no date). Returns { due } or { error }.
+function parseLoose(input) {
+  let s = String(input || "").toLowerCase().replace(/[,.]/g, " ").replace(/\b(at|on|by|due)\b/g, " ").replace(/\s+/g, " ").trim();
+  if (!s) return { due: null };
+
+  let time = null;
+  s = s.replace(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/, (m, h, mi, ap) => {
+    let hh = Number(h) % 12;
+    if (ap === "pm") hh += 12;
+    time = { h: hh, m: Number(mi || 0) };
+    return " ";
+  });
+  if (!time) {
+    s = s.replace(/\b(\d{1,2}):(\d{2})\b/, (m, h, mi) => {
+      time = { h: Number(h), m: Number(mi) };
+      return " ";
+    });
+  }
+  if (!time) {
+    s = s.replace(/\b(noon|midday)\b/, () => { time = { h: 12, m: 0 }; return " "; });
+    s = s.replace(/\b(midnight|eod|end of day)\b/, () => { time = { h: 23, m: 59 }; return " "; });
+  }
+  if (time && (time.h > 23 || time.m > 59)) return { error: "time" };
+  s = s.replace(/\s+/g, " ").trim();
+
+  const today = startOfDay(new Date());
+  let date = null;
+  let m;
+
+  if (!s) {
+    date = today;
+  } else if (/^(today|tod|now)$/.test(s)) {
+    date = today;
+  } else if (/^(tomorrow|tmrw|tmr|tom)$/.test(s)) {
+    date = new Date(today.getTime() + DAY);
+  } else if ((m = s.match(/^(?:in )?(\d{1,3}) ?(d|day|days)$/))) {
+    date = new Date(today.getTime() + Number(m[1]) * DAY);
+  } else if ((m = s.match(/^(?:in )?(\d{1,2}) ?(w|wk|week|weeks)$/))) {
+    date = new Date(today.getTime() + Number(m[1]) * 7 * DAY);
+  } else if (/^next week$/.test(s)) {
+    date = new Date(today.getTime() + 7 * DAY);
+  } else if ((m = s.match(/^(next |this )?([a-z]+)$/)) && WEEKDAY_NAMES[m[2]] !== undefined) {
+    let delta = (WEEKDAY_NAMES[m[2]] - today.getDay() + 7) % 7;
+    if (m[1] === "next ") delta += 7;
+    date = new Date(today.getTime() + delta * DAY);
+  } else if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) {
+    date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  } else if ((m = s.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/))) {
+    let y = m[3] ? Number(m[3]) : today.getFullYear();
+    if (y < 100) y += 2000;
+    date = new Date(y, Number(m[1]) - 1, Number(m[2]));
+    if (!m[3] && date < today) date.setFullYear(y + 1);
+  } else if ((m = s.match(/^([a-z]+) (\d{1,2})(?:st|nd|rd|th)?(?: (\d{4}))?$/)) && MONTH_NAMES[m[1]] !== undefined) {
+    const y = m[3] ? Number(m[3]) : today.getFullYear();
+    date = new Date(y, MONTH_NAMES[m[1]], Number(m[2]));
+    if (!m[3] && date < today) date.setFullYear(y + 1);
+  } else if ((m = s.match(/^(\d{1,2})(?:st|nd|rd|th)? ([a-z]+)(?: (\d{4}))?$/)) && MONTH_NAMES[m[2]] !== undefined) {
+    const y = m[3] ? Number(m[3]) : today.getFullYear();
+    date = new Date(y, MONTH_NAMES[m[2]], Number(m[1]));
+    if (!m[3] && date < today) date.setFullYear(y + 1);
+  }
+
+  if (!date || isNaN(date.getTime())) return { error: "date" };
+  return { due: toDueString(date, time) };
+}
+
+// ---------- phone-side mutations ----------
+
+function addLocalTask(state, text, due) {
+  const id = hash(`${text}|${due || ""}|${Date.now()}|${Math.random()}`);
+  state.local.push({ id, text, due: due || null, done: false, created: Date.now() });
+  writeState(state);
+  return id;
+}
+
+function toggleTask(state, item) {
+  if (item.source === "local") {
+    const rec = state.local.find((l) => l.id === item.id);
+    if (rec) rec.done = !item.done;
+  } else {
+    state.overrides[item.key] = !item.done;
+  }
+  writeState(state);
+}
+
+function clearCompleted(state, items) {
+  for (const it of items) {
+    if (!it.done) continue;
+    if (it.source === "local") state.local = state.local.filter((l) => l.id !== it.id);
+    else state.hidden[it.key] = true;
+  }
+  writeState(state);
+}
+
 // ---------- in-app checklist ----------
 
 const GROUP_EMOJI = { overdue: "🔴", today: "🟠", week: "🟡", later: "🔵", nodate: "⚪️", done: "✅" };
+
+async function addTaskDialog(prefillText, prefillWhen) {
+  const a = new Alert();
+  a.title = "New task";
+  a.message = "When: tomorrow · fri 3pm · nov 12 · 11/12 · in 3 days · 2026-11-12 15:00 · or leave blank";
+  a.addTextField("What needs doing", prefillText || "");
+  a.addTextField("When (optional)", prefillWhen || "");
+  a.addAction("Add");
+  a.addCancelAction("Cancel");
+  const choice = await a.presentAlert();
+  if (choice === -1) return null;
+  const text = (a.textFieldValue(0) || "").trim();
+  const whenRaw = (a.textFieldValue(1) || "").trim();
+  if (!text) return null;
+  const parsed = parseLoose(whenRaw);
+  if (parsed.error) {
+    const e = new Alert();
+    e.title = "Didn't catch that date";
+    e.message = `"${whenRaw}" — try tomorrow, fri 3pm, nov 12, 11/12, in 3 days, or 2026-11-12.`;
+    e.addAction("Try again");
+    e.addCancelAction("Cancel");
+    if ((await e.presentAlert()) === -1) return null;
+    return addTaskDialog(text, whenRaw);
+  }
+  return { text, due: parsed.due };
+}
 
 async function showChecklist(cfg, state, stale) {
   const table = new UITable();
@@ -453,6 +596,30 @@ async function showChecklist(cfg, state, stale) {
     hc.subtitleFont = Font.systemFont(13);
     hc.subtitleColor = C.muted;
     table.addRow(head);
+
+    const add = new UITableRow();
+    add.height = 54;
+    add.dismissOnSelect = false;
+    const plus = add.addText("＋");
+    plus.widthWeight = 10;
+    plus.centerAligned();
+    plus.titleFont = Font.boldSystemFont(22);
+    plus.titleColor = C.blue;
+    const ac = add.addText("Add task", "Saved on this phone, shows on the widget, gets reminders");
+    ac.widthWeight = 90;
+    ac.titleFont = Font.semiboldSystemFont(17);
+    ac.titleColor = C.blue;
+    ac.subtitleFont = Font.systemFont(12);
+    ac.subtitleColor = C.dim;
+    add.onSelect = async () => {
+      const t = await addTaskDialog();
+      if (t) {
+        addLocalTask(state, t.text, t.due);
+        render();
+        table.reload();
+      }
+    };
+    table.addRow(add);
 
     let lastGroup = null;
     for (const it of items) {
@@ -481,12 +648,27 @@ async function showChecklist(cfg, state, stale) {
       cell.subtitleFont = Font.systemFont(13);
       cell.subtitleColor = it.done ? C.dim : urgencyColor(it);
       row.onSelect = () => {
-        state.overrides[it.key] = !it.done;
-        writeState(state);
+        toggleTask(state, it);
         render();
         table.reload();
       };
       table.addRow(row);
+    }
+
+    if (items.some((i) => i.done)) {
+      const clear = new UITableRow();
+      clear.height = 50;
+      clear.dismissOnSelect = false;
+      const cc = clear.addText("Clear completed", "Removes checked tasks from this list");
+      cc.titleFont = Font.mediumSystemFont(15);
+      cc.titleColor = C.muted;
+      cc.subtitleColor = C.dim;
+      clear.onSelect = () => {
+        clearCompleted(state, items);
+        render();
+        table.reload();
+      };
+      table.addRow(clear);
     }
 
     if (items.length === 0) {
@@ -500,7 +682,7 @@ async function showChecklist(cfg, state, stale) {
 
     const foot = new UITableRow();
     foot.height = 56;
-    const fc = foot.addText("Edit the list", `${SRC.repo} · ${SRC.dir}/items.json`);
+    const fc = foot.addText("Edit the shared list on GitHub", `${SRC.repo} · ${SRC.dir}/items.json`);
     fc.titleFont = Font.mediumSystemFont(15);
     fc.titleColor = C.blue;
     fc.subtitleColor = C.dim;
@@ -510,6 +692,8 @@ async function showChecklist(cfg, state, stale) {
 
   render();
   await table.present(false);
+  // Re-schedule reminders for whatever the list looks like after edits.
+  try { await scheduleNotifications(prepare(cfg, state), cfg); } catch (e) {}
 }
 
 // ---------- main ----------
@@ -528,7 +712,8 @@ if (config.runsInWidget) {
   try { await scheduleNotifications(items, cfg); } catch (e) {}
 } else {
   // Running inside Scriptable: schedule reminders (this is where iOS asks for
-  // permission the first time), then show the checklist.
+  // permission the first time), then show the checklist. The checklist
+  // re-schedules again when dismissed.
   try { await scheduleNotifications(items, cfg); } catch (e) {}
   await showChecklist(cfg, state, stale);
 }

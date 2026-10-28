@@ -13,7 +13,9 @@ A white home-screen widget for iOS built with [Scriptable](https://scriptable.ap
 | Gray | No date |
 | Green check | Done |
 
-**Checklist.** iOS widgets can't scroll or take taps on rows, so tapping the widget opens Scriptable with the full list. Tap a task to check it off, tap again to undo. Completion is stored on the phone, so no GitHub credentials are needed. Setting `"done": true` in `items.json` also works.
+**Checklist.** iOS widgets can't scroll or take taps on rows, so tapping the widget opens Scriptable with the full list. Tap a task to check it off, tap again to undo. **Add task** at the top opens a form: what to do, and when in plain words. **Clear completed** removes checked tasks. Everything you add or check on the phone is stored on the phone, so no GitHub credentials are needed. Tasks can also live in `items.json` in the repo for anything you want versioned or edited from Claude Code.
+
+The "When" field understands: `tomorrow`, `fri`, `next mon 9:30am`, `nov 12`, `12 nov`, `11/12`, `in 3 days`, `next week`, `2026-11-12 15:00`, a bare time like `5pm` (today), or blank for no date.
 
 **Reminders.** On every refresh the script re-schedules local notifications for open tasks: 9:00 the day before and on the due day, 1 hour before a timed task, and a morning digest when anything is overdue or due today. Checking a task off cancels its reminders on the next refresh. The first time, iOS asks for notification permission: run the script inside Scriptable once and tap Allow.
 
@@ -22,9 +24,9 @@ A white home-screen widget for iOS built with [Scriptable](https://scriptable.ap
 1. In Scriptable, tap `+`, paste the contents of `loader.js`, name the script **Deadline Board**, tap play once and allow notifications.
 2. Add a **large** Scriptable widget to the home screen, long-press it, Edit Widget, set Script to Deadline Board.
 
-## Adding reminders
+## Adding tasks from the repo
 
-Edit `items.json` and push. The widget picks it up on its next refresh (about 15 minutes), or immediately if you open Scriptable and tap play.
+Tap **Add task** in the checklist for day-to-day use. For tasks you want in the repo, edit `items.json` and push. The widget picks it up on its next refresh (about 15 minutes), or immediately if you open Scriptable and tap play.
 
 ```json
 {
@@ -48,7 +50,7 @@ Edit `items.json` and push. The widget picks it up on its next refresh (about 15
 | `notify.daysBefore` | Extra reminder days ahead of the due date, e.g. `[1, 3]`. The due day itself is always included. |
 | `notify.digest` | Morning summary when anything is overdue or due today. |
 | `notify.enabled` | `false` turns all reminders off. |
-| `tapUrl` | Top level, optional. Where "Edit the list" in the checklist opens. |
+| `tapUrl` | Top level, optional. Where "Edit the shared list on GitHub" in the checklist opens. |
 
 Widget **Parameter** (optional): a URL to a different `items.json`.
 
