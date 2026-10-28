@@ -375,17 +375,26 @@ function dot(stack, color, size) {
   return d;
 }
 
+function badgeImage(size) {
+  const ctx = new DrawContext();
+  ctx.size = new Size(size, size);
+  ctx.opaque = false;
+  ctx.respectScreenScale = true;
+  ctx.setFillColor(C.orange);
+  ctx.fillEllipse(new Rect(0, 0, size, size));
+  ctx.setFont(Font.heavySystemFont(size * 0.64));
+  ctx.setTextColor(C.bg0);
+  ctx.setTextAlignedCenter();
+  ctx.drawTextInRect("₿", new Rect(0, size * 0.1, size, size));
+  return ctx.getImage();
+}
+
+// Drawn as an image: text inside a fixed-size stack gets squeezed out on device.
 function badge(stack, size) {
-  const b = stack.addStack();
-  b.size = new Size(size, size);
-  b.cornerRadius = size / 2;
-  b.backgroundColor = C.orange;
-  b.layoutHorizontally();
-  b.centerAlignContent();
-  b.addSpacer();
-  label(b, "₿", size * 0.68, C.bg0, Font.heavySystemFont(size * 0.68));
-  b.addSpacer();
-  return b;
+  const img = stack.addImage(badgeImage(size));
+  img.imageSize = new Size(size, size);
+  img.resizable = false;
+  return img;
 }
 
 function statCell(parent, title, value, color, sub, accent) {
