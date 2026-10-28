@@ -1,31 +1,35 @@
 # Deadline Board
 
-A white home-screen widget for iOS built with [Scriptable](https://scriptable.app). It lists dated to-dos from `items.json` in this folder, soonest first, and flags every one by urgency:
+A white home-screen widget for iOS built with [Scriptable](https://scriptable.app), with a scrollable checklist behind it and local reminders.
 
-| Flag | Meaning |
+**Widget.** Your dated to-dos from `items.json`, soonest first, each with a checkbox tinted by urgency. Top right: a counter of active tasks, plus a pill when anything is overdue or due today. The large size groups items under Overdue, Today, This week, Later and Done. Small and medium show the top three.
+
+| Checkbox color | Meaning |
 | --- | --- |
 | Red | Overdue |
 | Orange | Due today |
 | Amber | Due within 7 days |
 | Blue | Due later |
 | Gray | No date |
-| Green check | Done (only shown when `showDone` is true) |
+| Green check | Done |
 
-The header pill shows the overdue count, otherwise today's count, otherwise how many are open. Tapping the widget opens `items.json` on GitHub for editing.
+**Checklist.** iOS widgets can't scroll or take taps on rows, so tapping the widget opens Scriptable with the full list. Tap a task to check it off, tap again to undo. Completion is stored on the phone, so no GitHub credentials are needed. Setting `"done": true` in `items.json` also works.
+
+**Reminders.** On every refresh the script re-schedules local notifications for open tasks: 9:00 the day before and on the due day, 1 hour before a timed task, and a morning digest when anything is overdue or due today. Checking a task off cancels its reminders on the next refresh. The first time, iOS asks for notification permission: run the script inside Scriptable once and tap Allow.
 
 ## Setup
 
-1. In Scriptable, tap `+`, paste the contents of `loader.js`, name the script **Deadline Board**, tap play once.
-2. Add a Scriptable widget to the home screen (square shows 5 items, medium 5 with fuller dates, large 12), long-press it, Edit Widget, set Script to Deadline Board.
+1. In Scriptable, tap `+`, paste the contents of `loader.js`, name the script **Deadline Board**, tap play once and allow notifications.
+2. Add a **large** Scriptable widget to the home screen, long-press it, Edit Widget, set Script to Deadline Board.
 
 ## Adding reminders
 
-Edit `items.json` in Claude Code mobile and push. The widget picks it up on its next refresh (about 15 minutes), or immediately if you open Scriptable and tap play.
+Edit `items.json` and push. The widget picks it up on its next refresh (about 15 minutes), or immediately if you open Scriptable and tap play.
 
 ```json
 {
-  "title": "DEADLINES",
-  "showDone": false,
+  "title": "Deadlines",
+  "notify": { "enabled": true, "hour": 9, "minute": 0, "daysBefore": [1], "digest": true },
   "items": [
     { "text": "Send speaker captions", "due": "2026-10-30" },
     { "text": "Call with legal", "due": "2026-11-03 15:00" },
@@ -38,9 +42,13 @@ Edit `items.json` in Claude Code mobile and push. The widget picks it up on its 
 | --- | --- |
 | `text` | What to do. One line; long text shrinks to fit. |
 | `due` | `YYYY-MM-DD` or `YYYY-MM-DD HH:mm`, local time. Optional. |
-| `done` | `true` hides the item unless `showDone` is on. |
-| `showDone` | Top level. Show finished items with a green check at the bottom. |
-| `tapUrl` | Top level, optional. Override what opens when you tap the widget. |
+| `done` | `true` marks it finished. Done items show with a green check, at most two on the widget. |
+| `showDone` | Top level, set `false` to hide finished items from the widget entirely. |
+| `notify.hour` / `minute` | When daily reminders fire. |
+| `notify.daysBefore` | Extra reminder days ahead of the due date, e.g. `[1, 3]`. The due day itself is always included. |
+| `notify.digest` | Morning summary when anything is overdue or due today. |
+| `notify.enabled` | `false` turns all reminders off. |
+| `tapUrl` | Top level, optional. Where "Edit the list" in the checklist opens. |
 
 Widget **Parameter** (optional): a URL to a different `items.json`.
 
@@ -49,7 +57,7 @@ Widget **Parameter** (optional): a URL to a different `items.json`.
 | File | Purpose |
 | --- | --- |
 | `loader.js` | The only thing pasted into Scriptable. Resolves the branch's latest commit, fetches `board.js` at that commit, caches it, runs it. |
-| `board.js` | The widget. |
+| `board.js` | Widget, checklist and reminder scheduling. |
 | `items.json` | Your reminders. |
 
 After merging to `main`, change `branch` in the loader inside Scriptable and in the `SRC` block at the top of `board.js`.
